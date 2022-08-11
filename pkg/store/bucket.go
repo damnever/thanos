@@ -1888,13 +1888,15 @@ func checkNilPosting(l labels.Label, p index.Postings) index.Postings {
 
 // NOTE: Derived from tsdb.postingsForMatcher. index.Merge is equivalent to map duplication.
 func toPostingGroup(lvalsFn func(name string) ([]string, error), m *labels.Matcher) (*postingGroup, error) {
-	if m.Type == labels.MatchRegexp && len(findSetMatches(m.Value)) > 0 {
-		vals := findSetMatches(m.Value)
-		toAdd := make([]labels.Label, 0, len(vals))
-		for _, val := range vals {
-			toAdd = append(toAdd, labels.Label{Name: m.Name, Value: val})
+	if m.Type == labels.MatchRegexp {
+		if vals := findSetMatches(m.Value); len(vals) > 0 {
+			sort.Strings(vals)
+			toAdd := make([]labels.Label, 0, len(vals))
+			for _, val := range vals {
+				toAdd = append(toAdd, labels.Label{Name: m.Name, Value: val})
+			}
+			return newPostingGroup(false, toAdd, nil), nil
 		}
-		return newPostingGroup(false, toAdd, nil), nil
 	}
 
 	// If the matcher selects an empty value, it selects all the series which don't
