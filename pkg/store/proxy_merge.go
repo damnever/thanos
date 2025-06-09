@@ -18,6 +18,7 @@ import (
 	"github.com/pkg/errors"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/prometheus/model/labels"
+
 	grpc_opentracing "github.com/thanos-io/thanos/pkg/tracing/tracing_middleware"
 
 	"github.com/thanos-io/thanos/pkg/losertree"
@@ -236,6 +237,8 @@ type lazyRespSet struct {
 	initialized bool
 
 	shardMatcher *storepb.ShardMatcher
+
+	donec chan struct{}
 }
 
 func (l *lazyRespSet) Empty() bool {
@@ -326,6 +329,8 @@ func newLazyRespSet(
 		bufferedResponsesMtx: bufferedResponsesMtx,
 		bufferedResponses:    bufferedResponses,
 		shardMatcher:         shardMatcher,
+
+		donec: make(chan struct{}),
 	}
 	respSet.storeLabels = make(map[string]struct{})
 	for _, ls := range storeLabelSets {
@@ -344,6 +349,8 @@ func newLazyRespSet(
 			l.span.SetTag("processed.samples", seriesStats.Samples)
 			l.span.SetTag("processed.bytes", bytesProcessed)
 			l.span.Finish()
+
+			close(l.donec)
 		}()
 
 		numResponses := 0
@@ -527,11 +534,12 @@ func newAsyncRespSet(
 
 func (l *lazyRespSet) Close() {
 	l.bufferedResponsesMtx.Lock()
-	defer l.bufferedResponsesMtx.Unlock()
-
 	l.closeSeries()
 	l.noMoreData = true
 	l.dataOrFinishEvent.Signal()
+	l.bufferedResponsesMtx.Unlock()
+
+	<-l.donec // Wait for the internal goroutine to complete its work.
 
 	l.shardMatcher.Close()
 	_ = l.cl.CloseSend()
@@ -720,6 +728,8 @@ func sortWithoutLabels(set []*storepb.SeriesResponse, labelsToRemove map[string]
 }
 
 func (l *eagerRespSet) Close() {
+	l.wg.Wait()
+
 	if l.closeSeries != nil {
 		l.closeSeries()
 	}

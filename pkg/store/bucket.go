@@ -1761,6 +1761,10 @@ func (s *BucketStore) Series(req *storepb.SeriesRequest, seriesSrv storepb.Store
 			err = g.Wait()
 		})
 		if err != nil {
+			for _, resp := range respSets {
+				resp.Close()
+			}
+
 			code := codes.Aborted
 			if s, ok := status.FromError(errors.Cause(err)); ok {
 				code = s.Code()
@@ -3394,6 +3398,13 @@ func (r *bucketIndexReader) loadSeries(ctx context.Context, ids []storage.Series
 	stats.add(SeriesFetched, len(ids), int(end-start))
 
 	for i, id := range ids {
+		if x := uint64(id) - start; x > uint64(len(b)) {
+			level.Error(r.logger).Log(
+				"msg", "dirtyreturn: debug",
+				"block", r.block.meta.ULID.String(), "series-ref", id,
+				"block-range-start", start, "block-range-length", end-start, "downloaded-buffer-size", len(b),
+				"series-ids", fmt.Sprintf("%v", ids))
+		}
 		c := b[uint64(id)-start:]
 
 		l, n := binary.Uvarint(c)
