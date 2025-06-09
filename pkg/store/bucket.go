@@ -3133,6 +3133,7 @@ func (r *bucketIndexReader) fetchPostings(ctx context.Context, keys []labels.Lab
 		}
 		// Get postings for the given key from cache first.
 		if b, ok := fromCache[key]; ok {
+			level.Debug(r.logger).Log("msg", "damnever: fetch-postings", "from", "cache", "key", key.Name, "value", key.Value)
 			r.stats.add(PostingsTouched, 1, len(b))
 
 			l, closer, err := r.decodeCachedPostings(b)
@@ -3143,6 +3144,7 @@ func (r *bucketIndexReader) fetchPostings(ctx context.Context, keys []labels.Lab
 			closeFns = append(closeFns, closer...)
 			continue
 		}
+		level.Debug(r.logger).Log("msg", "damnever: fetch-postings", "from", "objstore", "key", key.Name, "value", key.Value)
 
 		// Cache miss; save pointer for actual posting in index stored in object store.
 		ptr, err := r.block.indexHeaderReader.PostingsOffset(key.Name, key.Value)
@@ -3357,6 +3359,15 @@ func (r *bucketIndexReader) PreloadSeries(ctx context.Context, ids []storage.Ser
 		return httpgrpc.Errorf(int(codes.ResourceExhausted), "exceeded bytes limit while loading series from index cache: %s", err)
 	}
 
+	if !slices.IsSorted(ids) {
+		level.Error(r.logger).Log("msg", "damnever: postings out of order", "series-refs", fmt.Sprintf("%v", ids))
+		for _, id := range ids {
+			if id > (1 << 32) {
+				level.Error(r.logger).Log("msg", "damnever: postings out of bound", "id", id, "series-refs", fmt.Sprintf("%v", ids))
+			}
+		}
+	}
+
 	parts := r.block.partitioner.Partition(len(ids), func(i int) (start, end uint64) {
 		return uint64(ids[i]), uint64(ids[i]) + uint64(r.block.estimatedMaxSeriesSize)
 	})
@@ -3394,6 +3405,13 @@ func (r *bucketIndexReader) loadSeries(ctx context.Context, ids []storage.Series
 	stats.add(SeriesFetched, len(ids), int(end-start))
 
 	for i, id := range ids {
+		if x := uint64(id) - start; x > uint64(len(b)) {
+			level.Error(r.logger).Log(
+				"msg", "damnever: debug",
+				"block", r.block.meta.ULID.String(), "series-ref", id,
+				"block-range-start", start, "block-range-length", end-start, "downloaded-buffer-size", len(b),
+				"series-ids", fmt.Sprintf("%v", ids))
+		}
 		c := b[uint64(id)-start:]
 
 		l, n := binary.Uvarint(c)
