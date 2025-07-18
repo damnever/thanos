@@ -1761,6 +1761,10 @@ func (s *BucketStore) Series(req *storepb.SeriesRequest, seriesSrv storepb.Store
 			err = g.Wait()
 		})
 		if err != nil {
+			for _, resp := range respSets {
+				resp.waitDone()
+			}
+
 			code := codes.Aborted
 			if s, ok := status.FromError(errors.Cause(err)); ok {
 				code = s.Code()
